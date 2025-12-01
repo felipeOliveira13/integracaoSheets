@@ -3,3 +3,5 @@ pandas
 gspread
 altair
 streamlit-authenticator
+psycopg2-binary
+bcrypt

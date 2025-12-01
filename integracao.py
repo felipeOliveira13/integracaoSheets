@@ -4,7 +4,7 @@ import pandas as pd
 import altair as alt # <-- NOVIDADE: Importação do Altair para gráficos
 
 st.set_page_config(
-    page_title="Dashboard de Preços Chevrolet", # <-- Novo título para a aba
+    page_title="Dashboard de Preços", # <-- Novo título para a aba
     page_icon="📊", # <-- Novo ícone (Emoji de gráfico)
     layout="wide" # Garante que o conteúdo ocupe toda a largura da tela
 )
@@ -55,7 +55,7 @@ inject_custom_css()
 SHEET_ID = "1fa4HLFfjIFKHjHBuxW_ymHkahVPzeoB_XlHNJMaNCg8"
 SHEET_NAME = "Chevrolet Preços"
 
-st.title("🚗 Tabela de Preços Chevrolet (Google Sheets)")
+st.title("🚗 Tabela de Preços (Google Sheets)")
 st.caption("Dados carregados diretamente do Google Sheets usando st.secrets.")
 
 

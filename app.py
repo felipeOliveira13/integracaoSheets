@@ -10,10 +10,10 @@ import os
 # --- VARIÁVEIS DE CONFIGURAÇÃO ---
 EMAIL_DOMAINS = ["botafogos.com.br", "gmail.com"]
 
-# --- FUNÇÃO DE CONEXÃO COM O BANCO DE DADOS (AGORA COM SSL) ---
+# --- FUNÇÃO DE CONEXÃO COM O BANCO DE DADOS (USANDO PARÂMETROS EXPLÍCITOS E SSL) ---
 
 def get_db_connection():
-    """Cria e retorna uma conexão com o banco de dados PostgreSQL (Supabase) usando string de conexão URI e forçando SSL."""
+    """Cria e retorna uma conexão com o banco de dados PostgreSQL (Supabase) usando parâmetros explícitos de rede e SSL."""
     
     db_config = st.secrets.get("db_credentials")
     
@@ -21,23 +21,22 @@ def get_db_connection():
         st.error("❌ Erro de Configuração: O bloco [db_credentials] não foi encontrado no secrets.toml.")
         return None
         
-    # Adiciona o parâmetro sslmode à URI para garantir conexão segura
-    ssl_mode = db_config.get("ssl_mode", "require") # Padrão é 'require'
-    
-    # 2. Constrói a string de conexão completa (URI)
-    db_uri = (
-        f"postgresql://{db_config['username']}:{db_config['password']}@{db_config['host']}:"
-        f"{db_config['port']}/{db_config['database']}?sslmode={ssl_mode}"
-    )
-    
     conn = None
     try:
-        # Tenta a conexão usando a URI
-        conn = psycopg2.connect(db_uri)
+        # Tenta a conexão usando parâmetros explícitos para garantir que o psycopg2 use o HOST e a PORTA
+        conn = psycopg2.connect(
+            database=db_config['database'],
+            user=db_config['username'],
+            password=db_config['password'],
+            host=db_config['host'],
+            port=db_config['port'],
+            # Força o uso de SSL, o que é MANDATÓRIO para Streamlit e Supabase
+            sslmode='require' 
+        )
         return conn
     except psycopg2.OperationalError as e:
         # Se falhar, mostra o erro
-        st.error(f"❌ Erro Crítico de Conexão: O banco de dados recusou a conexão. Verifique o SSL e as credenciais. Detalhes: {e}")
+        st.error(f"❌ Erro Crítico de Conexão: O banco de dados recusou a conexão. Verifique o firewall, credenciais e o status do banco. Detalhes: {e}")
         return None
     except Exception as e:
         st.error(f"❌ Ocorreu um erro inesperado na conexão com o banco de dados: {e}")
@@ -63,7 +62,6 @@ def create_user_table(conn):
     cur = None
     try:
         cur = conn.cursor()
-        # Garante que a coluna 'password' usa um tipo de texto grande o suficiente (VARCHAR ou TEXT)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,

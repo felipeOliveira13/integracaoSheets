@@ -2,149 +2,32 @@ import streamlit as st
 import gspread
 import pandas as pd
 import altair as alt
-import psycopg2
-from psycopg2.extras import RealDictCursor
-import bcrypt
-import os
 
 # --- VARIÁVEIS DE CONFIGURAÇÃO ---
-EMAIL_DOMAINS = ["botafogos.com.br", "gmail.com"]
-MIN_PASSWORD_LENGTH = 8 # Aumentado para 8 por boa prática
-
-# --- FUNÇÃO DE CONEXÃO COM O BANCO DE DADOS (COM TIMEOUT) ---
-
-def get_db_connection():
-    """Cria e retorna uma conexão com o banco de dados PostgreSQL (Supabase) usando parâmetros explícitos de rede e SSL."""
-    
-    db_config = st.secrets.get("db_credentials")
-    
-    if not db_config:
-        st.error("❌ Erro de Configuração: O bloco [db_credentials] não foi encontrado no secrets.toml.")
-        return None
-        
-    conn = None
-    try:
-        # Tenta a conexão usando parâmetros explícitos.
-        # Adicionado connect_timeout para a conexão não ficar presa em tentativas de roteamento.
-        conn = psycopg2.connect(
-            database=db_config['database'],
-            user=db_config['username'],
-            password=db_config['password'],
-            host=db_config['host'],
-            port=db_config['port'],
-            sslmode='require',
-            connect_timeout=10  # Tempo limite de 10 segundos
-        )
-        return conn
-    except psycopg2.OperationalError as e:
-        # Se o erro for de roteamento (Cannot assign requested address) ou de autenticação (password failed)
-        st.error(f"❌ Erro Crítico de Conexão: O banco de dados recusou a conexão. Detalhes: {e}")
-        st.caption("Verifique se as credenciais no secrets.toml estão corretas e se o host Supabase permite conexões externas.")
-        return None
-    except Exception as e:
-        st.error(f"❌ Ocorreu um erro inesperado na conexão com o banco de dados: {e}")
-        return None
-
-# --- FUNÇÕES DE SEGURANÇA ---
-
-def hash_password(password):
-    """Gera o hash da senha usando bcrypt."""
-    salt = bcrypt.gensalt()
-    hashed_password = bcrypt.hashpw(password.encode('utf-8'), salt)
-    return hashed_password.decode('utf-8')
-
-def check_password(password, hashed_password):
-    """Verifica se a senha fornecida corresponde ao hash."""
-    return bcrypt.checkpw(password.encode('utf-8'), hashed_password.encode('utf-8'))
-
-def create_user_table(conn):
-    """Cria a tabela 'users' se ela não existir."""
-    if conn is None:
-        return
-        
-    cur = None
-    try:
-        cur = conn.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id SERIAL PRIMARY KEY,
-                username VARCHAR(100) UNIQUE NOT NULL,
-                email VARCHAR(255) UNIQUE NOT NULL,
-                password_hash TEXT NOT NULL
-            );
-        """)
-        conn.commit()
-        st.success("✅ Tabela de usuários verificada/criada com sucesso. Tente Cadastrar.")
-    except Exception as e:
-        st.error(f"Erro ao criar a tabela de usuários: {e}")
-    finally:
-        if cur: cur.close()
-
-def register_user(conn, username, email, password):
-    """Registra um novo usuário no banco de dados."""
-    if conn is None:
-        return False, "Falha na conexão com o banco de dados."
-
-    cur = None
-    try:
-        cur = conn.cursor()
-        hashed_password = hash_password(password)
-        
-        cur.execute(
-            "INSERT INTO users (username, email, password_hash) VALUES (%s, %s, %s)",
-            (username, email, hashed_password)
-        )
-        conn.commit()
-        return True, "Usuário registrado com sucesso! Você pode fazer login agora."
-    except psycopg2.IntegrityError:
-        return False, "Erro: Nome de usuário ou e-mail já existe."
-    except Exception as e:
-        return False, f"Erro ao registrar usuário: {e}"
-    finally:
-        if cur: cur.close()
-
-def authenticate_user(conn, username, password):
-    """Autentica o usuário e retorna o hash da senha e o ID."""
-    if conn is None:
-        return None, "Falha na conexão com o banco de dados."
-
-    cur = None
-    try:
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute(
-            "SELECT password_hash FROM users WHERE username = %s",
-            (username,)
-        )
-        user_data = cur.fetchone()
-        
-        if user_data:
-            if check_password(password, user_data['password_hash']):
-                return True, "Login bem-sucedido!"
-            else:
-                return False, "Senha incorreta."
-        else:
-            return False, "Usuário não encontrado."
-    except Exception as e:
-        return False, f"Erro durante a autenticação: {e}"
-    finally:
-        if cur: cur.close()
-
-# --- FUNÇÕES DE CARREGAMENTO DE DADOS (EXISTENTES) ---
-
 SHEET_ID = "1fa4HLFfjIFKHjHBuxW_ymHkahVPzeoB_XlHNJMaNCg8"
 SHEET_NAME = "Chevrolet Preços"
 
+# --- FUNÇÕES DE CARREGAMENTO DE DADOS ---
+
 @st.cache_data(ttl=600)
 def load_data_from_sheet():
-    # ... (Sua função de carregamento de dados do Google Sheets)
+    """Carrega os dados da planilha do Google Sheets."""
     try:
+        # Puxa as credenciais do Google Sheets do secrets.toml
         credentials = st.secrets["gcp_service_account"]
         gc = gspread.service_account_from_dict(credentials)
+        
+        # Abre a planilha e a aba específica
         spreadsheet = gc.open_by_key(SHEET_ID)
         worksheet = spreadsheet.worksheet(SHEET_NAME)
+        
+        # Converte os registros em um DataFrame Pandas
         df = pd.DataFrame(worksheet.get_all_records())
+        
+        # Limpeza e conversão de dados: Ano
         df['Ano'] = pd.to_numeric(df['Ano'], errors='coerce').fillna(0).astype(int)
         
+        # Limpeza e conversão de dados: Preço (para gráficos e cálculos)
         df['Preço Numérico'] = pd.to_numeric(
             df['Preço (R$)'].astype(str).str.replace(r'[R$.,]', '', regex=True), 
             errors='coerce'
@@ -153,7 +36,7 @@ def load_data_from_sheet():
         return df
     
     except KeyError:
-        st.error("❌ Erro de Configuração: O segredo 'gcp_service_account' não foi encontrado.")
+        st.error("❌ Erro de Configuração: O segredo 'gcp_service_account' não foi encontrado no secrets.toml.")
         return pd.DataFrame()
         
     except Exception as e:
@@ -161,71 +44,13 @@ def load_data_from_sheet():
         st.warning("Verifique se o email de serviço foi adicionado como 'Leitor' na planilha.")
         return pd.DataFrame()
 
-# --- LAYOUT DAS PÁGINAS ---
-
-def login_page():
-    st.subheader("Login de Usuário")
-    with st.form("login_form"):
-        username = st.text_input("Nome de Usuário")
-        password = st.text_input("Senha", type="password")
-        submitted = st.form_submit_button("Entrar")
-
-        if submitted:
-            conn = get_db_connection()
-            if conn:
-                success, message = authenticate_user(conn, username, password)
-                if success:
-                    st.session_state["logged_in"] = True
-                    st.session_state["username"] = username
-                    st.success(f"Bem-vindo, {username}!")
-                    st.rerun()
-                else:
-                    st.error(message)
-                conn.close()
-
-def register_page():
-    st.subheader("Cadastro de Novo Usuário")
-    st.info(f"O cadastro é restrito a e-mails com os domínios: {', '.join(EMAIL_DOMAINS)}.")
-
-    with st.form("register_form"):
-        username = st.text_input("Nome de Usuário")
-        email = st.text_input("E-mail")
-        password = st.text_input("Senha", type="password")
-        password_confirm = st.text_input("Confirmar Senha", type="password")
-        submitted = st.form_submit_button("Cadastrar")
-
-        if submitted:
-            # 1. Validação de Domínio de E-mail
-            if not any(email.endswith(f"@{domain}") for domain in EMAIL_DOMAINS):
-                st.error("E-mail inválido. Use um dos domínios permitidos.")
-            # 2. Validação de Senha
-            elif password != password_confirm:
-                st.error("As senhas não coincidem.")
-            elif len(password) < MIN_PASSWORD_LENGTH: # Usando a nova constante
-                st.error(f"A senha deve ter pelo menos {MIN_PASSWORD_LENGTH} caracteres.")
-            else:
-                conn = get_db_connection()
-                if conn:
-                    # Tenta registrar o usuário
-                    success, message = register_user(conn, username, email, password)
-                    if success:
-                        st.success(message)
-                    else:
-                        st.error(message)
-                    conn.close()
-
+# --- LAYOUT PRINCIPAL DO APLICATIVO ---
 
 def main_app():
-    st.title("🚗 Tabela de Preços Chevrolet (Google Sheets)")
+    st.set_page_config(layout="wide", page_title="Tabela de Preços Chevrolet")
+    st.title("🚗 Tabela de Preços Chevrolet (Dados do Google Sheets)")
     
-    # Exibe o usuário logado
-    st.sidebar.success(f"Logado como: {st.session_state.get('username', 'Usuário')}")
-    if st.sidebar.button("Logout"):
-        st.session_state["logged_in"] = False
-        st.session_state["username"] = None
-        st.rerun()
-
-    st.caption("Dados carregados diretamente do Google Sheets usando st.secrets.")
+    st.caption("Dados carregados diretamente da planilha, sem autenticação.")
 
     # Carrega os dados (função protegida por cache)
     df = load_data_from_sheet()
@@ -258,12 +83,12 @@ def main_app():
         ]
 
         if df_filtered.empty:
-            st.warning("Não foi possível carregar os dados ou o filtro retornou zero resultados.")
+            st.warning("O filtro retornou zero resultados. Ajuste a seleção.")
         else:
             # --- TABELA DE DADOS ---
             st.dataframe(df_filtered[['Modelo', 'Ano', 'Preço (R$)']])
             
-            # --- GRÁFICO (Exemplo) ---
+            # --- GRÁFICO ---
             st.subheader("Gráfico de Preços por Ano")
             
             # Agrupa por ano e calcula a média do preço
@@ -284,36 +109,5 @@ def main_app():
     # Botão de recarga para forçar a busca de novos dados
     st.button("Recarregar Dados", on_click=load_data_from_sheet.clear)
 
-
-# --- LÓGICA DE NAVEGAÇÃO PRINCIPAL ---
-
-# 1. Inicialização do Session State
-if "logged_in" not in st.session_state:
-    st.session_state["logged_in"] = False
-if "current_page" not in st.session_state:
-    st.session_state["current_page"] = "Login"
-
-# 2. Tela principal
-if st.session_state["logged_in"]:
+if __name__ == "__main__":
     main_app()
-else:
-    # Mostra a tela de login/cadastro
-    st.title("🔐 Autenticação de Usuário")
-    
-    st.sidebar.subheader("Selecione a Ação")
-    action = st.sidebar.radio(" ", ("Login", "Cadastrar"))
-
-    # Verifica a conexão no início, antes de renderizar a tela de login/cadastro
-    conn = get_db_connection()
-    if conn:
-        conn.close()
-        # Se a conexão for bem-sucedida, garante que a tabela existe
-        with get_db_connection() as conn_init:
-            create_user_table(conn_init)
-        
-        if action == "Login":
-            login_page()
-        elif action == "Cadastrar":
-            register_page()
-            
-    # Mensagem de erro de conexão aparecerá dentro da get_db_connection() se falhar.

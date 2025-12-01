@@ -9,8 +9,9 @@ import os
 
 # --- VARIÁVEIS DE CONFIGURAÇÃO ---
 EMAIL_DOMAINS = ["botafogos.com.br", "gmail.com"]
+MIN_PASSWORD_LENGTH = 8 # Aumentado para 8 por boa prática
 
-# --- FUNÇÃO DE CONEXÃO COM O BANCO DE DADOS ---
+# --- FUNÇÃO DE CONEXÃO COM O BANCO DE DADOS (COM TIMEOUT) ---
 
 def get_db_connection():
     """Cria e retorna uma conexão com o banco de dados PostgreSQL (Supabase) usando parâmetros explícitos de rede e SSL."""
@@ -23,20 +24,22 @@ def get_db_connection():
         
     conn = None
     try:
-        # Tenta a conexão usando parâmetros explícitos para garantir que o psycopg2 use o HOST e a PORTA
-        # O 'sslmode=require' é obrigatório para o Supabase no Streamlit
+        # Tenta a conexão usando parâmetros explícitos.
+        # Adicionado connect_timeout para a conexão não ficar presa em tentativas de roteamento.
         conn = psycopg2.connect(
             database=db_config['database'],
             user=db_config['username'],
             password=db_config['password'],
             host=db_config['host'],
             port=db_config['port'],
-            sslmode='require' 
+            sslmode='require',
+            connect_timeout=10  # Tempo limite de 10 segundos
         )
         return conn
     except psycopg2.OperationalError as e:
-        # Se falhar, mostra o erro
-        st.error(f"❌ Erro Crítico de Conexão: O banco de dados recusou a conexão. Verifique o firewall, credenciais e o status do banco. Detalhes: {e}")
+        # Se o erro for de roteamento (Cannot assign requested address) ou de autenticação (password failed)
+        st.error(f"❌ Erro Crítico de Conexão: O banco de dados recusou a conexão. Detalhes: {e}")
+        st.caption("Verifique se as credenciais no secrets.toml estão corretas e se o host Supabase permite conexões externas.")
         return None
     except Exception as e:
         st.error(f"❌ Ocorreu um erro inesperado na conexão com o banco de dados: {e}")
@@ -71,7 +74,7 @@ def create_user_table(conn):
             );
         """)
         conn.commit()
-        st.success("Tabela de usuários verificada/criada com sucesso. Tente Cadastrar.")
+        st.success("✅ Tabela de usuários verificada/criada com sucesso. Tente Cadastrar.")
     except Exception as e:
         st.error(f"Erro ao criar a tabela de usuários: {e}")
     finally:
@@ -198,8 +201,8 @@ def register_page():
             # 2. Validação de Senha
             elif password != password_confirm:
                 st.error("As senhas não coincidem.")
-            elif len(password) < 6:
-                st.error("A senha deve ter pelo menos 6 caracteres.")
+            elif len(password) < MIN_PASSWORD_LENGTH: # Usando a nova constante
+                st.error(f"A senha deve ter pelo menos {MIN_PASSWORD_LENGTH} caracteres.")
             else:
                 conn = get_db_connection()
                 if conn:
